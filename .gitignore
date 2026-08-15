@@ -6,5 +6,10 @@ __pycache__/
 venv/
 
 # Generated data / results
-data/images/
-results/*.json
+data/
+results/
+report/
+
+# Dev-cycle orchestration workspace
+.pi/
+devcycle_ws/
