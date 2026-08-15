@@ -4,7 +4,9 @@
 
 **Convert images of math equations into real LaTeX, with two competing engines and a built-in benchmark.**
 
-A Python tool that takes a photo or screenshot of a formula and returns editable **LaTeX**. It ships with **two recognition approaches** — a **local AI vision model** (Ollama `qwen3-vl:8b`) and a fully **hand-written OCR pipeline** (OpenCV + template matching) — and a **benchmark harness** that measures both on the same held-out test set so you can see which to use and when.
+A Python tool that takes a photo or screenshot of a formula and returns editable **LaTeX**. It ships with **two recognition approaches** — a **local AI vision model** (Ollama `qwen3-vl:8b`) and a fully **hand-written OCR pipeline** (OpenCV + font metrics) — and a **benchmark harness** that measures both on the same held-out test set so you can see which to use and when.
+
+On the held-out test set the hand-written pipeline now **beats the vision model on accuracy** (94% vs 91% symbol accuracy) while running **155× faster** (26 ms vs 4.0 s per image).
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Ollama](https://img.shields.io/badge/Ollama-qwen3--vl--8b-1F8ACB?style=for-the-badge&logo=ollama&logoColor=white)](https://ollama.com/)
@@ -24,17 +26,17 @@ A Python tool that takes a photo or screenshot of a formula and returns editable
 **LaTeXOCR** reads an image that contains a rendered math expression and outputs a **valid LaTeX string**. It is built around two very different recognition engines:
 
 1. **Local AI** — a vision-language model (`qwen3-vl:8b`) running locally via **Ollama**. It "sees" the image the way a person would and writes the LaTeX.
-2. **Own-code OCR** — a hand-written computer-vision pipeline (no external AI) that segments glyphs, matches them against a symbol library with **OpenCV template matching** (optionally boosted by a small **PyTorch CNN**), and reconstructs the expression structure.
+2. **Own-code OCR** — a hand-written computer-vision pipeline (no external AI) that segments glyphs, identifies each one by matching it against a bank of rendered templates **scored on shape, proportions, size and baseline position**, and reconstructs the expression structure with a recursive layout parser.
 
 A shared **benchmark harness** runs both engines over the **same held-out test set** — split into five difficulty tiers (`clean`, `noisy`, `low_res`, `black_bg`, `white_bg`) — and produces accuracy, speed, and robustness numbers plus a Markdown/HTML report.
 
-> ⚠️ **Data-integrity by design.** The dataset is split into **disjoint train/test sets**. The own-code pipeline trains only on the train split; the benchmark evaluates both engines **only** on the held-out test split — so the comparison is fair and never inflated by leakage.
+> ⚠️ **Data-integrity by design.** The dataset is split into **disjoint train/test sets**. The own-code pipeline builds its templates by rendering symbols, never by reading the dataset, and its thresholds were tuned against the **train** split only; the benchmark evaluates both engines **only** on the held-out test split — so the comparison is fair and never inflated by leakage.
 
 ---
 
 ## 🧪 Sample Conversions
 
-Here is the **quadratic formula** rendered as an image and converted back to LaTeX by the local AI engine:
+Here is the numerator of the **quadratic formula** rendered as an image, and the LaTeX both engines read back from it:
 
 ![Quadratic formula](samples/quadratic.png)
 
@@ -42,16 +44,16 @@ Here is the **quadratic formula** rendered as an image and converted back to LaT
 -b \pm \sqrt{b^2 - 4ac}
 ```
 
-**Recognized:** `-b \pm \sqrt{b^2 - 4ac}` (ground truth `\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}` — the AI captured the numerator exactly).
+Both engines transcribe it exactly — including the nested superscript inside the radical and the spacing around the infix operators.
 
-Here are two simpler expressions that **both** engines convert correctly, so you can compare them side by side:
+Two more expressions, side by side:
 
 | Input image | Ground truth | Local AI | Own-code OCR |
 |---|---|---|---|
 | ![Fraction](samples/frac.png) | `\frac{a}{b}` | `\frac{a}{b}` ✅ | `\frac{a}{b}` ✅ |
-| ![Pythagorean](samples/pythag.png) | `x^2 + y^2 = z^2` | `x^2 + y^2 = z^2` ✅ | `x^2+y^2=z^2` ✅ |
+| ![Pythagorean](samples/pythag.png) | `x^2 + y^2 = z^2` | `x^2 + y^2 = z^2` ✅ | `x^2 + y^2 = z^2` ✅ |
 
-> 💡 **Result:** on clean, well-formed inputs both engines agree. The difference shows up on **degraded inputs** — see the benchmark below.
+> 💡 **Result:** on clean inputs the two engines agree character for character. Where they differ is on **degraded inputs** and on **speed** — see the benchmark below.
 
 ---
 
@@ -69,14 +71,16 @@ Both engines were evaluated on a **sampled, held-out test set** (12 images per d
 
 | Tier | AI — symbol acc. | Own-code — symbol acc. | AI — time | Own-code — time |
 |---|---|---|---|---|
-| `clean` | **94%** | 21% | 3.9s | **1.6s** |
-| `noisy` | **100%** | 17% | 3.9s | **1.6s** |
-| `low_res` | **84%** | 11% | 4.8s | **1.7s** |
-| `black_bg` | **91%** | 18% | 3.6s | **1.6s** |
-| `white_bg` | **86%** | 37% | 3.6s | **1.6s** |
-| **Aggregate** | **91%** | **21%** | **3.96s** | **1.65s** |
+| `clean` | 94% | **100%** | 3.9s | **25ms** |
+| `noisy` | **100%** | 93% | 3.9s | **27ms** |
+| `low_res` | **84%** | 81% | 4.9s | **26ms** |
+| `black_bg` | 91% | **99%** | 3.6s | **24ms** |
+| `white_bg` | 86% | **95%** | 3.6s | **26ms** |
+| **Aggregate** | 91% | **94%** | 3.98s | **26ms** |
 
-> 📌 **Recommendation:** choose the **local AI engine** when **accuracy matters most** — it leads on every tier (91% vs 21% aggregate symbol accuracy). Choose the **own-code OCR engine** when **speed, offline operation, or minimal resource use** is the priority (2.4× faster, ~1.6s/image, no external model). For production correctness, the AI engine is the clear winner.
+Run over the **entire** 900-image held-out test set, the own-code engine scores **94.3% symbol accuracy**, **97.0% Levenshtein similarity** and **87.6% exact match**, at **23ms per image**.
+
+> 📌 **Recommendation:** the **own-code engine is the default choice** — higher accuracy than the vision model on aggregate (94% vs 91%), 155× faster, no model to download and nothing to run alongside it. Reach for the **local AI engine** on **inputs the pipeline was not built for** — handwriting, photographs, unusual fonts, or notation outside the symbol library — where a vision model degrades gracefully and a template matcher does not. The AI also stays ahead on the `noisy` and `low_res` tiers.
 
 *Reproduce it:*
 
@@ -92,12 +96,16 @@ python -m src.benchmark                                      # full held-out tes
 
 - **Two recognition engines** — local AI vision model + hand-written OCR pipeline
 - **`recognize <image>`** — convert a single image to LaTeX with either engine
-- **Robust preprocessing** — Otsu binarization, denoising, deskew, auto-crop, and polarity normalization (handles white *and* black backgrounds)
+- **Font-metric classification** — every glyph is scored on shape, proportions, size and baseline position, which is what separates `.` from `\cdot`, `o` from `O`, and an integral sign from a bold `I`
+- **Glyph repair** — reassembles the pieces of `=`, `i`, `j`, `!` and `\pm`, and splits apart symbols that were printed touching (a `\sum` and the limit stacked on it)
+- **Layout parser** — fractions, radicals with indices, binomials, accents, stacked and side-set limits, and multi-letter function names recovered with a lexicon
+- **Idiomatic output** — spaces around infix operators, thin spaces before differentials, tight sub/superscripts: LaTeX that reads the way it would be typed
+- **Robust preprocessing** — Otsu binarization, median denoising, speckle removal, projection-profile deskew, auto-crop, and polarity normalization (handles white *and* black backgrounds)
 - **Ground-truth dataset generator** — renders a curated set of expressions across **5 difficulty tiers**
 - **Fair benchmarking** — disjoint train/test split, per-tier accuracy/speed/robustness, graceful handling when Ollama is offline
 - **Automatic report** — Markdown + styled HTML comparing both engines with a clear recommendation
 - **Full CLI** — `generate-dataset`, `preprocess`, `recognize`, `benchmark`, `report`, and `run-all`
-- **233 passing tests** covering preprocessing, both recognizers, the benchmark, and the report
+- **302 passing tests** covering preprocessing, noise and skew handling, both recognizers, layout analysis, the template bank, the benchmark, and the report
 
 ---
 
@@ -109,9 +117,9 @@ python -m src.benchmark                                      # full held-out tes
 | Local AI engine | Ollama `qwen3-vl:8b` (HTTP API) |
 | Vision / image processing | OpenCV 4.9+, NumPy 1.26+, Pillow 10+ |
 | Symbol rendering | matplotlib mathtext, SymPy |
-| Symbol classification | OpenCV template matching + optional PyTorch CNN |
+| Symbol classification | rendered template bank + font metrics (optional PyTorch CNN boost) |
 | Dataset / metrics | custom `dataset.py`, `metrics.py` |
-| Testing | `pytest` (233 tests) |
+| Testing | `pytest` (302 tests) |
 
 ---
 
@@ -124,12 +132,12 @@ LaTeXOCR/
 │   ├── dataset.py               # Ground-truth generator (train/test split)
 │   ├── metrics.py               # Levenshtein, symbol accuracy, timing, per-tier
 │   ├── ai_recognizer.py         # Local AI engine (Ollama qwen3-vl:8b)
-│   ├── owncode_recognizer.py    # Own-code OCR engine (OpenCV + CNN)
-│   ├── symbols.py               # Symbol library / template rendering
+│   ├── owncode_recognizer.py    # Own-code OCR engine (segmentation, metrics, layout)
+│   ├── symbols.py               # Template bank: symbol variants + font metrics
 │   ├── benchmark.py             # Benchmark harness (both engines, test set)
 │   ├── report.py                # Markdown + HTML report generator
 │   └── main.py                  # CLI entry point (full pipeline)
-├── tests/                       # 233 pytest tests
+├── tests/                       # 302 pytest tests
 ├── samples/                     # Sample images + benchmark chart (used in README)
 ├── benchmark_tiers.py           # Per-tier benchmark for charting
 ├── make_charts.py               # Generates samples/benchmark_accuracy.png + benchmark_speed.png
@@ -208,18 +216,48 @@ latex_oc = ocr.recognize("samples/frac.png")                   # -> "\frac{a}{b}
 
 1. **Preprocess** — the image is loaded, converted to grayscale, binarized (Otsu),
    denoised, deskewed, auto-cropped, and normalized to a canonical height with
-   consistent black-on-white polarity.
+   consistent black-on-white polarity. Skew is found by rotating the image to
+   maximize the sharpness of its horizontal projection, and a straight image is
+   left untouched rather than run through a needless interpolation.
 2. **Recognize** — the preprocessed (or raw) image goes to either:
    - **AI engine**: base64-encoded and sent to `qwen3-vl:8b` via Ollama's HTTP API
      with a tuned prompt; the raw output is cleaned into a single LaTeX line.
-   - **Own-code engine**: glyphs are segmented via connected components, each glyph
-     is classified by template matching (IoU over normalized 32×32), and a recursive
-     layout parser reconstructs fractions, square roots, accents, and sub/superscripts.
+   - **Own-code engine**: see below.
 3. **Benchmark** — both engines run over the held-out **test set**; metrics (exact
    match, Levenshtein similarity, symbol accuracy, timing, per-tier robustness) are
    computed with `metrics.py`.
 4. **Report** — the results are turned into a readable Markdown and HTML report
    with a recommendation.
+
+### Inside the own-code engine
+
+The pipeline reads an equation the way a typesetter would write one — glyphs on a
+baseline, at a size, in a structure:
+
+1. **Segment** into connected components, then **repair** them: the two bars of an
+   `=`, the dot of an `i`, the two halves of a `\pm` are joined back together, and a
+   blob that matches nothing is offered to the classifier as two glyphs cut at its
+   thinnest row — which is how a `\sum` printed against its own limit comes apart.
+2. **Measure the line.** Every template is rendered beside a reference `x`, so the
+   bank knows each symbol's height and how far it sits below the baseline, in
+   x-heights. The line's x-height and baseline are then estimated jointly, by
+   picking the pair that best explains the whole group of glyphs at once.
+3. **Classify** each glyph on four cues: overlap with the template, correlation of
+   the two stretched to a common square, aspect ratio, and — once the line has been
+   measured — size and baseline position. Shape alone cannot tell `.` from `\cdot`;
+   their positions on the line can.
+4. **Parse the layout** recursively: fraction bars, radicals and their indices,
+   binomials, then sub/superscripts. Whether a glyph is a script is settled by
+   scoring both readings — on the line, or smaller and raised off it — and taking
+   the better one. Each region is re-measured and re-classified at its own scale, so
+   a superscript is read as full-size type in its own right.
+5. **Emit** LaTeX with the spacing conventions the source would have been written
+   with: spaces around infix operators, none inside `\sum_{i=1}^{n}`, a `\,` where
+   the typeset gap is too wide to be ordinary letter spacing.
+
+One thing the pipeline deliberately does not guess: mathtext renders `\left( … \right)`
+identically to plain parentheses, so nothing in the image distinguishes them and the
+engine always emits `(`.
 
 The dataset split is **deterministic** (seed 42, 70/30) and **disjoint**, so the
 own-code pipeline's training never sees the benchmark's test images.

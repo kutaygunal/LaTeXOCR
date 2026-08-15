@@ -191,6 +191,21 @@ def _per_tier_section(payload: dict) -> str:
     return "\n\n".join(blocks)
 
 
+def _timing(results: dict, name: str | None) -> float | None:
+    """Mean seconds per image for one recognizer, if it has any."""
+    if not name:
+        return None
+    return (results.get(name) or {}).get("timing", {}).get("mean_seconds")
+
+
+def _fmt_ratio(results: dict, name: str | None, metric: str) -> str:
+    """Format one recognizer's score for a metric, or ``n/a``."""
+    if not name:
+        return "n/a"
+    value = (results.get(name) or {}).get(metric)
+    return "n/a" if value is None else f"{value:.3f}"
+
+
 def _recommendation(payload: dict) -> str:
     """Build a clear recommendation paragraph from the summary."""
     summary = payload.get("summary", {})
@@ -213,25 +228,37 @@ def _recommendation(payload: dict) -> str:
             "both recognizers available for a full recommendation."
         )
 
+    other = "owncode" if accuracy_winner == "ai" else "ai"
+    accuracy = (
+        f"**{_label(accuracy_winner)}** leads on accuracy "
+        f"(exact match {_fmt_ratio(results, accuracy_winner, 'exact_match_rate')} "
+        f"vs {_fmt_ratio(results, other, 'exact_match_rate')}; symbol accuracy "
+        f"{_fmt_ratio(results, summary.get('best_mean_symbol_accuracy'), 'mean_symbol_accuracy')} "
+        f"for **{_label(summary.get('best_mean_symbol_accuracy'))}**). "
+    )
+    speed = (
+        f"**{_label(speed_winner)}** is the fastest, at "
+        f"{_fmt_sec(_timing(results, speed_winner))} per image against "
+        f"{_fmt_sec(_timing(results, 'owncode' if speed_winner == 'ai' else 'ai'))}. "
+    )
+
     if accuracy_winner == "ai":
-        return (
-            f"**{_label('ai')}** is the recommended approach for accuracy. "
-            f"It wins on exact match, similarity, symbol accuracy, and pass "
-            f"rate. **{_label('owncode')}** is faster "
-            f"(mean {_fmt_sec(results['owncode'].get('timing', {}).get('mean_seconds'))} "
-            f"vs {_fmt_sec(results['ai'].get('timing', {}).get('mean_seconds'))}) "
-            "and runs fully offline with no external model dependency. "
+        closing = (
             "Choose the AI recognizer when correctness matters most; choose "
             "the own-code pipeline when speed, offline operation, or low "
-            "resource usage is the priority."
+            "resource usage is the priority — it runs fully offline with no "
+            "external model dependency."
         )
-
-    return (
-        f"**{_label(accuracy_winner)}** leads on accuracy, while "
-        f"**{_label(speed_winner)}** is the fastest. For the best balance of "
-        "accuracy and speed, consider the own-code pipeline if its accuracy "
-        "is acceptable for your use case, otherwise prefer the AI recognizer."
-    )
+    else:
+        closing = (
+            "The own-code pipeline is therefore the default choice: it matches "
+            "or beats the model on this test set, runs fully offline and needs "
+            "no external model. Keep the AI recognizer for inputs the pipeline "
+            "was not built for — handwriting, photographs, or notation outside "
+            "its symbol library — where a vision model degrades more "
+            "gracefully than a template matcher."
+        )
+    return accuracy + speed + closing
 
 
 def build_markdown(payload: dict) -> str:

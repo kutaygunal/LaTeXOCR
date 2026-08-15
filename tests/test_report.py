@@ -138,8 +138,7 @@ def test_available_recognizers():
 def test_recommendation_ai_wins_accuracy():
     p = _payload()  # best_exact_match == "ai"
     rec = _recommendation(p)
-    assert "is the recommended approach for accuracy" in rec
-    assert "AI (qwen3-vl:8b)" in rec
+    assert "AI (qwen3-vl:8b)** leads on accuracy" in rec
     assert "Own-code OCR" in rec
     # Speed comparison: owncode faster (0.1s) vs ai (2.0s).
     assert "0.100s" in rec
@@ -147,27 +146,36 @@ def test_recommendation_ai_wins_accuracy():
     assert "runs fully offline" in rec
 
 
+def test_recommendation_quotes_the_scores_it_compares():
+    """The recommendation states the numbers, rather than asserting a winner."""
+    rec = _recommendation(_payload())
+    assert "0.500" in rec and "0.300" in rec  # the two exact-match rates
+    assert "0.600" in rec  # the winning symbol accuracy
+
+
 def test_recommendation_ai_wins_in_markdown():
     md = build_markdown(_payload())
-    assert "is the recommended approach for accuracy" in md
+    assert "leads on accuracy" in md
 
 
 def test_recommendation_owncode_wins_accuracy():
     p = _payload()
     p["summary"]["best_exact_match"] = "owncode"
+    p["summary"]["best_mean_symbol_accuracy"] = "owncode"
     p["summary"]["fastest_mean_seconds"] = "owncode"
     rec = _recommendation(p)
-    assert "leads on accuracy, while" in rec
+    assert "Own-code OCR** leads on accuracy" in rec
     assert "is the fastest" in rec
-    assert "Own-code OCR" in rec
+    assert "default choice" in rec
 
 
 def test_recommendation_owncode_wins_in_markdown():
     p = _payload()
     p["summary"]["best_exact_match"] = "owncode"
+    p["summary"]["best_mean_symbol_accuracy"] = "owncode"
     p["summary"]["fastest_mean_seconds"] = "owncode"
     md = build_markdown(p)
-    assert "leads on accuracy, while" in md
+    assert "Own-code OCR** leads on accuracy" in md
 
 
 def test_recommendation_no_available_recognizers():

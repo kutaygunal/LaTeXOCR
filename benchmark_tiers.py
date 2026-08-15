@@ -36,6 +36,10 @@ def main():
 
     ai = AIRecognizer() if not SKIP_AI else None
     owncode = ocr.recognize
+    # Warm up the own-code engine so its one-time template-bank build is not
+    # charged to the first image, the same way the AI engine's model is already
+    # resident in Ollama before timing starts.
+    owncode(sample[0]["image_path"])
 
     results = {"tiers": tiers, "sample_per_tier": SAMPLE_PER_TIER,
                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
