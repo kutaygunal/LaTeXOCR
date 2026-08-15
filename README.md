@@ -57,9 +57,15 @@ Here are two simpler expressions that **both** engines convert correctly, so you
 
 ## 📊 Benchmark
 
-Both engines were evaluated on a **sampled, held-out test set** (12 images per difficulty tier, 60 images total). The chart shows **recognition accuracy** and **inference speed** per tier:
+Both engines were evaluated on a **sampled, held-out test set** (12 images per difficulty tier, 60 images total). The charts below show **recognition accuracy** and **inference speed** per tier, plus the aggregate across all tiers:
 
-![Benchmark results](samples/benchmark.png)
+<p align="center">
+  <img src="samples/benchmark_accuracy.png" alt="Recognition accuracy by difficulty tier" width="90%">
+</p>
+
+<p align="center">
+  <img src="samples/benchmark_speed.png" alt="Inference speed by difficulty tier" width="90%">
+</p>
 
 | Tier | AI — symbol acc. | Own-code — symbol acc. | AI — time | Own-code — time |
 |---|---|---|---|---|
@@ -126,7 +132,7 @@ LaTeXOCR/
 ├── tests/                       # 233 pytest tests
 ├── samples/                     # Sample images + benchmark chart (used in README)
 ├── benchmark_tiers.py           # Per-tier benchmark for charting
-├── make_charts.py               # Generates samples/benchmark.png
+├── make_charts.py               # Generates samples/benchmark_accuracy.png + benchmark_speed.png
 ├── requirements.txt             # Runtime dependencies
 └── README.md                    # This file
 ```
