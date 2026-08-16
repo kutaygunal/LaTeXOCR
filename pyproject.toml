@@ -1,0 +1,24 @@
+[project]
+name = "latexocr"
+version = "0.1.0"
+description = "Convert images of math equations into real LaTeX, with two competing engines and a built-in benchmark."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python>=4.9",
+    "pillow>=10.0",
+    "matplotlib>=3.8",
+    "sympy>=1.12",
+    "torch>=2.0",
+    "torchvision>=0.15",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
