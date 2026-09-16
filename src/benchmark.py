@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ai_recognizer import RecognizerError, recognize as ai_recognize  # noqa: E402
 from dataset import DatasetError, test_set  # noqa: E402
+from formulanet_recognizer import recognize as formulanet_recognize  # noqa: E402
 from metrics import evaluate, levenshtein_similarity, time_recognizer  # noqa: E402
 from owncode_recognizer import recognize as owncode_recognize  # noqa: E402
 
@@ -44,6 +45,7 @@ DEFAULT_PASS_THRESHOLD = 0.8
 RECOGNIZERS = {
     "ai": ai_recognize,
     "owncode": owncode_recognize,
+    "formulanet": formulanet_recognize,
 }
 
 
@@ -347,6 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the AI recognizer (useful when Ollama is down)",
     )
     parser.add_argument(
+        "--skip-formulanet",
+        action="store_true",
+        help="skip the FormulaNet recognizer (useful when PaddleOCR is absent)",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -360,6 +367,8 @@ def main(argv: list[str] | None = None) -> int:
     registry = dict(RECOGNIZERS)
     if args.skip_ai:
         registry.pop("ai", None)
+    if args.skip_formulanet:
+        registry.pop("formulanet", None)
     payload = run_benchmark(
         data_dir=args.data_dir,
         results_dir=args.results_dir,

@@ -24,7 +24,7 @@ import urllib.request
 import cv2
 import numpy as np
 
-from preprocess import preprocess
+from preprocess import load, preprocess
 
 # Default Ollama endpoint and model.
 DEFAULT_BASE_URL = "http://localhost:11434"
@@ -178,10 +178,10 @@ class AIRecognizer:
         """Load the image, optionally running the shared preprocessing."""
         if self.use_preprocess:
             return preprocess(image_path)
-        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            raise RecognizerError(f"Could not load image: {image_path}")
-        return img
+        try:
+            return load(image_path)
+        except Exception as exc:
+            raise RecognizerError(f"Could not load image: {image_path}") from exc
 
     def _request(self, image_b64: str) -> str:
         """POST one chat request to Ollama and return the raw model content."""

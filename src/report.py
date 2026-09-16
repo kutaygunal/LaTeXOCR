@@ -41,6 +41,7 @@ DEFAULT_HTML_FILE = "report.html"
 RECOGNIZER_LABELS = {
     "ai": "AI (qwen3-vl:8b)",
     "owncode": "Own-code OCR",
+    "formulanet": "FormulaNet (PP-FormulaNet_plus-L)",
 }
 
 # Metrics shown in the summary table, in display order.
@@ -225,39 +226,52 @@ def _recommendation(payload: dict) -> str:
         return (
             f"Only **{_label(names[0])}** produced usable results. "
             "The comparison is therefore incomplete; re-run the benchmark with "
-            "both recognizers available for a full recommendation."
+            "all recognizers available for a full recommendation."
         )
 
-    other = "owncode" if accuracy_winner == "ai" else "ai"
+    runner_up = None
+    if accuracy_winner:
+        for n in names:
+            if n != accuracy_winner:
+                if runner_up is None or (results.get(n) or {}).get(
+                    "exact_match_rate", -1
+                ) > (results.get(runner_up) or {}).get("exact_match_rate", -1):
+                    runner_up = n
+
+    # For the speed sentence, compare the fastest engine against the slowest
+    # alternative engine (so the two names always differ).
+    speed_comparison = None
+    if speed_winner:
+        for n in names:
+            if n != speed_winner:
+                t_n = (results.get(n) or {}).get("timing") or {}
+                t_cur = (
+                    (results.get(speed_comparison) or {}).get("timing") or {}
+                )
+                if speed_comparison is None or t_n.get(
+                    "mean_seconds", float("inf")
+                ) > t_cur.get("mean_seconds", float("inf")):
+                    speed_comparison = n
+
     accuracy = (
         f"**{_label(accuracy_winner)}** leads on accuracy "
         f"(exact match {_fmt_ratio(results, accuracy_winner, 'exact_match_rate')} "
-        f"vs {_fmt_ratio(results, other, 'exact_match_rate')}; symbol accuracy "
+        f"vs {_fmt_ratio(results, runner_up, 'exact_match_rate')}; symbol accuracy "
         f"{_fmt_ratio(results, summary.get('best_mean_symbol_accuracy'), 'mean_symbol_accuracy')} "
         f"for **{_label(summary.get('best_mean_symbol_accuracy'))}**). "
     )
     speed = (
         f"**{_label(speed_winner)}** is the fastest, at "
         f"{_fmt_sec(_timing(results, speed_winner))} per image against "
-        f"{_fmt_sec(_timing(results, 'owncode' if speed_winner == 'ai' else 'ai'))}. "
+        f"{_fmt_sec(_timing(results, speed_comparison))}. "
     )
 
-    if accuracy_winner == "ai":
-        closing = (
-            "Choose the AI recognizer when correctness matters most; choose "
-            "the own-code pipeline when speed, offline operation, or low "
-            "resource usage is the priority — it runs fully offline with no "
-            "external model dependency."
-        )
-    else:
-        closing = (
-            "The own-code pipeline is therefore the default choice: it matches "
-            "or beats the model on this test set, runs fully offline and needs "
-            "no external model. Keep the AI recognizer for inputs the pipeline "
-            "was not built for — handwriting, photographs, or notation outside "
-            "its symbol library — where a vision model degrades more "
-            "gracefully than a template matcher."
-        )
+    closing = (
+        f"Choose **{_label(accuracy_winner)}** when raw formula recognition "
+        "accuracy matters most. The own-code pipeline remains a strong offline "
+        "fallback with no external model dependency, and the FormulaNet engine "
+        "offers a dedicated, pre-trained alternative when available."
+    )
     return accuracy + speed + closing
 
 

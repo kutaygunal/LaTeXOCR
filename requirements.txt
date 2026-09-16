@@ -5,3 +5,10 @@ matplotlib>=3.8
 sympy>=1.12
 torch>=2.0
 torchvision>=0.15
+
+# Optional: the FormulaNet engine needs PaddleOCR + PaddlePaddle.
+# Install separately (platform-specific wheel), e.g.:
+#   pip install paddlepaddle==3.0.0 paddleocr
+# or for CUDA 12.6:
+#   pip install paddlepaddle-gpu==3.0.0 -i \
+#     https://www.paddlepaddle.org.cn/packages/stable/cu126/

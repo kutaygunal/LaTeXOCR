@@ -143,7 +143,7 @@ def test_recommendation_ai_wins_accuracy():
     # Speed comparison: owncode faster (0.1s) vs ai (2.0s).
     assert "0.100s" in rec
     assert "2.000s" in rec
-    assert "runs fully offline" in rec
+    assert "Choose" in rec
 
 
 def test_recommendation_quotes_the_scores_it_compares():
@@ -166,7 +166,7 @@ def test_recommendation_owncode_wins_accuracy():
     rec = _recommendation(p)
     assert "Own-code OCR** leads on accuracy" in rec
     assert "is the fastest" in rec
-    assert "default choice" in rec
+    assert "Choose" in rec
 
 
 def test_recommendation_owncode_wins_in_markdown():

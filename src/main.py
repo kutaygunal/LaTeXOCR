@@ -8,7 +8,7 @@ Usage
 -----
     python -m src.main generate-dataset [--per-tier N] [--seed S] [--data-dir D]
     python -m src.main preprocess IMAGE [--height H] [--out O]
-    python -m src.main recognize IMAGE [--recognizer ai|owncode]
+    python -m src.main recognize IMAGE [--recognizer ai|owncode|formulanet]
     python -m src.main benchmark [--data-dir D] [--results-dir R] [--skip-ai]
     python -m src.main report [--results-dir R] [--report-dir P]
     python -m src.main run-all [--data-dir D] [--results-dir R] [--report-dir P]
@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ai_recognizer import recognize as ai_recognize  # noqa: E402
 from benchmark import run_benchmark  # noqa: E402
 from dataset import DatasetError, generate  # noqa: E402
+from formulanet_recognizer import recognize as formulanet_recognize  # noqa: E402
 from owncode_recognizer import recognize as owncode_recognize  # noqa: E402
 from preprocess import preprocess  # noqa: E402
 from report import generate_report  # noqa: E402
@@ -34,6 +35,7 @@ from report import generate_report  # noqa: E402
 RECOGNIZERS = {
     "ai": ai_recognize,
     "owncode": owncode_recognize,
+    "formulanet": formulanet_recognize,
 }
 
 
@@ -68,6 +70,8 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     registry = dict(RECOGNIZERS)
     if args.skip_ai:
         registry.pop("ai", None)
+    if getattr(args, "skip_formulanet", False):
+        registry.pop("formulanet", None)
     payload = run_benchmark(
         data_dir=args.data_dir,
         results_dir=args.results_dir,
@@ -117,6 +121,8 @@ def _cmd_run_all(args: argparse.Namespace) -> int:
     registry = dict(RECOGNIZERS)
     if args.skip_ai:
         registry.pop("ai", None)
+    if getattr(args, "skip_formulanet", False):
+        registry.pop("formulanet", None)
     payload = run_benchmark(
         data_dir=args.data_dir,
         results_dir=args.results_dir,
@@ -187,6 +193,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the AI recognizer (useful when Ollama is down)",
     )
     bench.add_argument(
+        "--skip-formulanet",
+        action="store_true",
+        help="skip the FormulaNet recognizer (useful when PaddleOCR is absent)",
+    )
+    bench.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -221,6 +232,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-ai",
         action="store_true",
         help="skip the AI recognizer (useful when Ollama is down)",
+    )
+    run.add_argument(
+        "--skip-formulanet",
+        action="store_true",
+        help="skip the FormulaNet recognizer (useful when PaddleOCR is absent)",
     )
     run.add_argument(
         "--limit",

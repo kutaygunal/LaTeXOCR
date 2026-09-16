@@ -326,6 +326,7 @@ def test_cli_skip_ai(tmp_path):
         "--data-dir", DATA_DIR,
         "--results-dir", str(tmp_path / "r"),
         "--skip-ai",
+        "--skip-formulanet",
         "--limit", "5",
     ])
     assert rc == 0
@@ -341,6 +342,7 @@ def test_cli_limit_flag(tmp_path):
         "--data-dir", DATA_DIR,
         "--results-dir", str(tmp_path / "r"),
         "--skip-ai",
+        "--skip-formulanet",
         "--limit", "3",
     ])
     assert rc == 0
@@ -352,6 +354,7 @@ def test_cli_limit_flag(tmp_path):
 
 def test_build_parser_has_flags():
     p = build_parser()
-    args = p.parse_args(["--skip-ai", "--limit", "7"])
+    args = p.parse_args(["--skip-ai", "--skip-formulanet", "--limit", "7"])
     assert args.skip_ai is True
+    assert args.skip_formulanet is True
     assert args.limit == 7

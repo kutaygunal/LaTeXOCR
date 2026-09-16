@@ -20,5 +20,15 @@ dev = [
     "pytest>=8.0",
 ]
 
+# FormulaNet engine (PP-FormulaNet_plus-L) needs PaddleOCR + PaddlePaddle.
+# Installed separately because the Paddle wheel is platform-specific:
+#   pip install paddlepaddle==3.0.0 paddleocr
+# or for CUDA 12.6:
+#   pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+formulanet = [
+    "paddlepaddle>=3.0",
+    "paddleocr>=3.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

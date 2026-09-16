@@ -26,9 +26,10 @@ On the held-out test set the hand-written pipeline now **beats the vision model 
 **LaTeXOCR** reads an image that contains a rendered math expression and outputs a **valid LaTeX string**. It is built around two very different recognition engines:
 
 1. **Local AI** — a vision-language model (`qwen3-vl:8b`) running locally via **Ollama**. It "sees" the image the way a person would and writes the LaTeX.
-2. **Own-code OCR** — a hand-written computer-vision pipeline (no external AI) that segments glyphs, identifies each one by matching it against a bank of rendered templates **scored on shape, proportions, size and baseline position**, and reconstructs the expression structure with a recursive layout parser.
+2. **FormulaNet (optional)** — a dedicated, pre-trained formula-recognition model (`PP-FormulaNet_plus-L`) via **PaddleOCR**. Strong on complex and **Chinese** formulas.
+3. **Own-code OCR** — a hand-written computer-vision pipeline (no external AI) that segments glyphs, identifies each one by matching it against a bank of rendered templates **scored on shape, proportions, size and baseline position**, and reconstructs the expression structure with a recursive layout parser.
 
-A shared **benchmark harness** runs both engines over the **same held-out test set** — split into five difficulty tiers (`clean`, `noisy`, `low_res`, `black_bg`, `white_bg`) — and produces accuracy, speed, and robustness numbers plus a Markdown/HTML report.
+A shared **benchmark harness** runs the engines over the **same held-out test set** — split into five difficulty tiers (`clean`, `noisy`, `low_res`, `black_bg`, `white_bg`) — and produces accuracy, speed, and robustness numbers plus a Markdown/HTML report.
 
 > ⚠️ **Data-integrity by design.** The dataset is split into **disjoint train/test sets**. The own-code pipeline builds its templates by rendering symbols, never by reading the dataset, and its thresholds were tuned against the **train** split only; the benchmark evaluates both engines **only** on the held-out test split — so the comparison is fair and never inflated by leakage.
 
@@ -94,7 +95,7 @@ python -m src.benchmark                                      # full held-out tes
 
 ## ✨ Features
 
-- **Two recognition engines** — local AI vision model + hand-written OCR pipeline
+- **Three recognition engines** — local AI vision model + FormulaNet + hand-written OCR pipeline
 - **`recognize <image>`** — convert a single image to LaTeX with either engine
 - **Font-metric classification** — every glyph is scored on shape, proportions, size and baseline position, which is what separates `.` from `\cdot`, `o` from `O`, and an integral sign from a bold `I`
 - **Glyph repair** — reassembles the pieces of `=`, `i`, `j`, `!` and `\pm`, and splits apart symbols that were printed touching (a `\sum` and the limit stacked on it)
@@ -115,6 +116,7 @@ python -m src.benchmark                                      # full held-out tes
 |---|---|
 | Language | Python 3.11+ |
 | Local AI engine | Ollama `qwen3-vl:8b` (HTTP API) |
+| FormulaNet engine | PaddleOCR `PP-FormulaNet_plus-L` (optional) |
 | Vision / image processing | OpenCV 4.9+, NumPy 1.26+, Pillow 10+ |
 | Symbol rendering | matplotlib mathtext, SymPy |
 | Symbol classification | rendered template bank + font metrics (optional PyTorch CNN boost) |
@@ -132,9 +134,10 @@ LaTeXOCR/
 │   ├── dataset.py               # Ground-truth generator (train/test split)
 │   ├── metrics.py               # Levenshtein, symbol accuracy, timing, per-tier
 │   ├── ai_recognizer.py         # Local AI engine (Ollama qwen3-vl:8b)
+│   ├── formulanet_recognizer.py # FormulaNet engine (PaddleOCR PP-FormulaNet_plus-L)
 │   ├── owncode_recognizer.py    # Own-code OCR engine (segmentation, metrics, layout)
 │   ├── symbols.py               # Template bank: symbol variants + font metrics
-│   ├── benchmark.py             # Benchmark harness (both engines, test set)
+│   ├── benchmark.py             # Benchmark harness (engines, test set)
 │   ├── report.py                # Markdown + HTML report generator
 │   └── main.py                  # CLI entry point (full pipeline)
 ├── tests/                       # 302 pytest tests
@@ -168,9 +171,17 @@ pip install -r requirements.txt
 
 ### Recognize a single image
 
+The shared loader used by the own-code and AI engines accepts PNG, JPEG, BMP,
+TIFF, GIF, WEBP, and several other common raster formats. Animated images are
+read deterministically from their first frame. SVG is not currently accepted
+because the pipeline operates on raster pixels.
+
 ```bash
 # Use the local AI engine (default)
 python -m src.main recognize path/to/equation.png --recognizer ai
+
+# Use the FormulaNet engine (requires PaddleOCR)
+python -m src.main recognize path/to/equation.png --recognizer formulanet
 
 # Use the hand-written OCR engine
 python -m src.main recognize path/to/equation.png --recognizer owncode

@@ -1,7 +1,7 @@
 """Shared image loading and preprocessing module.
 
 This is the ONE shared input contract that both recognition approaches
-(AI-001 and OWN-001) call. It turns a raw LaTeX equation image (PNG/JPG)
+(AI-001 and OWN-001) call. It turns a raw LaTeX equation image
 into a clean, normalized, binarized grayscale array ready for downstream
 recognition.
 
@@ -17,6 +17,7 @@ import os
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 # Canonical output height (pixels) for the resized, preprocessed image.
 CANONICAL_HEIGHT = 64
@@ -33,8 +34,13 @@ SPECK_AREA_FRACTION = 0.008
 SPECK_GAP_RATIO = 6.0
 SPECK_MIN_NOISE_COUNT = 10
 
-# Supported image extensions (lowercase, without dot).
-SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+# Supported raster image extensions (lowercase, without dot). Pillow is used
+# for loading so formats that OpenCV does not consistently decode (notably GIF
+# and WEBP) follow the same path as PNG/JPEG/TIFF.
+SUPPORTED_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp",
+    ".ico", ".ppm", ".pgm", ".pbm", ".jp2",
+}
 
 
 class PreprocessError(Exception):
@@ -47,7 +53,8 @@ def load(path: str) -> np.ndarray:
     Parameters
     ----------
     path : str
-        Path to a PNG/JPG/BMP/TIFF image.
+        Path to a PNG/JPG/BMP/TIFF/GIF/WEBP (or another supported raster)
+        image. For animated images, the first frame is used.
 
     Returns
     -------
@@ -70,10 +77,28 @@ def load(path: str) -> np.ndarray:
             f"Supported: {sorted(SUPPORTED_EXTENSIONS)}"
         )
 
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise PreprocessError(f"OpenCV could not decode image: {path}")
+    try:
+        with Image.open(path) as image:
+            # Equation recognition expects one still image. Selecting frame 0
+            # makes animated GIFs deterministic and avoids silently combining
+            # different equations from multiple frames.
+            try:
+                image.seek(0)
+            except EOFError as exc:
+                raise PreprocessError(f"Image has no readable frames: {path}") from exc
 
+            frame = ImageOps.exif_transpose(image.copy())
+            # Composite transparency onto white before converting to grayscale;
+            # otherwise transparent GIF/PNG pixels can become black text.
+            rgba = frame.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            background.alpha_composite(rgba)
+            img = np.asarray(background.convert("L"), dtype=np.uint8).copy()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise PreprocessError(f"Pillow could not decode image: {path}") from exc
+
+    if img.size == 0:
+        raise PreprocessError(f"Image is empty: {path}")
     return img
 
 

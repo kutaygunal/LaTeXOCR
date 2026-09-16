@@ -93,7 +93,8 @@ def test_cli_benchmark_skip_ai(tmp_path):
     results_dir = str(tmp_path / "results")
     rc = main([
         "benchmark", "--data-dir", DATA_DIR,
-        "--results-dir", results_dir, "--skip-ai", "--limit", "3",
+        "--results-dir", results_dir, "--skip-ai", "--skip-formulanet",
+        "--limit", "3",
     ])
     assert rc == 0
     out = os.path.join(results_dir, "benchmark.json")
@@ -114,7 +115,8 @@ def test_cli_report(tmp_path):
     # First produce results via benchmark.
     main([
         "benchmark", "--data-dir", DATA_DIR,
-        "--results-dir", results_dir, "--skip-ai", "--limit", "3",
+        "--results-dir", results_dir, "--skip-ai", "--skip-formulanet",
+        "--limit", "3",
     ])
     rc = main([
         "report", "--results-dir", results_dir, "--report-dir", report_dir,

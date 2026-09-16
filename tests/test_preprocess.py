@@ -53,10 +53,26 @@ def test_load_invalid_path_raises():
 
 
 def test_load_unsupported_extension_raises(tmp_path):
-    p = tmp_path / "x.gif"
-    p.write_bytes(b"GIF89a")
+    p = tmp_path / "x.txt"
+    p.write_bytes(b"not an image")
     with pytest.raises(PreprocessError):
         load(str(p))
+
+
+def test_load_gif_returns_first_frame_as_grayscale(tmp_path):
+    from PIL import Image, ImageDraw
+
+    p = tmp_path / "equation.gif"
+    first = Image.new("L", (80, 30), 255)
+    ImageDraw.Draw(first).rectangle((20, 10, 60, 15), fill=0)
+    second = Image.new("L", (80, 30), 255)
+    ImageDraw.Draw(second).ellipse((30, 8, 50, 22), fill=0)
+    first.save(p, save_all=True, append_images=[second], duration=100, loop=0)
+
+    out = load(str(p))
+    assert out.dtype == np.uint8
+    assert out.ndim == 2
+    assert np.array_equal(out, np.asarray(first))
 
 
 def test_load_corrupt_file_raises(tmp_path):
