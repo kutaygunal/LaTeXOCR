@@ -16,6 +16,8 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from dataset import (  # noqa: E402
+    COMPLEX_EXAMPLES,
+    COMPLEX_EXPRESSION_COUNT,
     CURATED_EXPRESSIONS,
     DEFAULT_PER_TIER,
     DEFAULT_SEED,
@@ -23,6 +25,7 @@ from dataset import (  # noqa: E402
     TRAIN_RATIO,
     DatasetError,
     generate,
+    generate_complex,
     load,
     test_set as _test_set,
     train_set as _train_set,
@@ -199,6 +202,31 @@ def test_generate_disjoint_guarantee(tmp_path):
     train = _train_set(str(tmp_path))
     test = _test_set(str(tmp_path))
     assert {s["id"] for s in train}.isdisjoint({s["id"] for s in test})
+
+
+def test_complex_corpus_has_100_diverse_examples():
+    assert len(COMPLEX_EXAMPLES) == COMPLEX_EXPRESSION_COUNT == 100
+    assert len({latex for _, latex in COMPLEX_EXAMPLES}) == 100
+    assert len({category for category, _ in COMPLEX_EXAMPLES}) >= 8
+
+
+def test_generate_complex_writes_100_test_samples(tmp_path, monkeypatch):
+    # Avoid spending test time rendering 100 matplotlib figures; generation
+    # mechanics and the manifest are what this unit test covers.
+    import dataset
+
+    monkeypatch.setattr(
+        dataset,
+        "_render_latex",
+        lambda *args, **kwargs: np.full((40, 80), 255, dtype=np.uint8),
+    )
+    manifest_path = generate_complex(str(tmp_path), seed=7)
+    manifest = json.load(open(manifest_path, encoding="utf-8"))
+    assert manifest["dataset"] == "complex_100"
+    assert manifest["n_examples"] == 100
+    assert len(manifest["samples"]) == 100
+    assert {s["split"] for s in manifest["samples"]} == {"test"}
+    assert len(_test_set(str(tmp_path))) == 100
 
 
 # ---------------------------------------------------------------------------

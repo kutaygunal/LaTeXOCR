@@ -50,13 +50,13 @@ MIN_AREA = 5
 # Working height (pixels) the input image is normalized to before
 # segmentation. Taller than the shared preprocessing default: template
 # matching on 32x32 patches needs glyphs that are more than a few pixels wide.
-WORK_HEIGHT = 128
+WORK_HEIGHT = 192
 
 # Fraction-bar geometry thresholds (relative to image height H).
-FRAC_MIN_ASPECT = 4.0
+FRAC_MIN_ASPECT = 3.2
 FRAC_MAX_HEIGHT_FRAC = 0.2
 FRAC_MIN_WIDTH_FRAC = 0.5  # fraction bar must be >= this * max component width
-FRAC_MIN_WIDTH_RATIO = 1.05  # ... and wider than the glyphs it divides
+FRAC_MIN_WIDTH_RATIO = 0.98  # ... and approximately as wide as what it divides
 
 # Script (sub/superscript) vertical tolerance, as a fraction of image height.
 # Used only when the region is too small to estimate font metrics from.
@@ -549,6 +549,17 @@ def _classify_group(
         glyph.symbol, glyph.style, glyph.conf = bank.best(
             glyph, x_height, baseline, exclude
         )
+        # Lowercase x/z and their uppercase forms have nearly identical
+        # silhouettes. Their cap-height is the reliable cue; enforce it after
+        # the joint metric fit so an x-height glyph is not promoted to X/Z by
+        # a one-pixel stroke difference.
+        if (
+            x_height
+            and glyph.symbol in ("V", "X", "Z")
+            and glyph.h / x_height < 1.18
+        ):
+            glyph.symbol = glyph.symbol.lower()
+            glyph.style = "italic"
 
 
 # ---------------------------------------------------------------------------
@@ -582,13 +593,25 @@ def _merge_glyphs(a: Glyph, b: Glyph, symbol: str | None = None) -> Glyph:
 def _merge_equals(comps: list[Glyph], H: int) -> list[Glyph]:
     """Merge two vertically-adjacent horizontal bars into a single '=' glyph."""
     bars = [c for c in comps if _is_hbar(c, H)]
+    fraction_stack_ids: set[int] = set()
+    for bar in bars:
+        column = []
+        for other in bars:
+            overlap = min(bar.x1, other.x1) - max(bar.x0, other.x0)
+            if overlap < 0.65 * min(bar.w, other.w):
+                continue
+            if min(bar.w, other.w) < 0.6 * max(bar.w, other.w):
+                continue
+            column.append(other)
+        if len(column) >= 3:
+            fraction_stack_ids.update(id(item) for item in column)
     merged: set[int] = set()
     result: list[Glyph] = []
     for i, a in enumerate(bars):
-        if id(a) in merged:
+        if id(a) in merged or id(a) in fraction_stack_ids:
             continue
         for b in bars[i + 1 :]:
-            if id(b) in merged:
+            if id(b) in merged or id(b) in fraction_stack_ids:
                 continue
             x_overlap = min(a.x1, b.x1) - max(a.x0, b.x0)
             if x_overlap <= 0:
@@ -630,7 +653,7 @@ def _merge_dots(comps: list[Glyph]) -> list[Glyph]:
                 continue
             if not 0.4 <= dot.w / max(dot.h, 1) <= 2.5:
                 continue  # a dot is roughly square; a fraction bar is not
-            if dot.w > 1.15 * base.w or dot.h > DOT_MAX_HEIGHT_RATIO * base.h:
+            if dot.w > 1.6 * base.w or dot.h > DOT_MAX_HEIGHT_RATIO * base.h:
                 continue  # too big to be a dot
             if dot.area > 0.45 * base.area:
                 continue
@@ -675,6 +698,99 @@ def _sub_glyph(glyph: Glyph, row0: int, row1: int) -> Glyph | None:
         int((image < 128).sum()),
         image,
     )
+
+
+def _split_rule_blob(glyph: Glyph) -> list[Glyph] | None:
+    """Detach a fraction rule that touches numerator/denominator ink.
+
+    Dense formulas can rasterize with a glyph touching the fraction bar. The
+    connected-component pass then returns one very wide blob and the layout
+    parser never sees a bar. A fraction rule is distinctive: one or more rows
+    span most of the blob width. Remove that band, segment the remaining ink,
+    and return the rule as its own glyph.
+    """
+    if glyph.h < 8 or glyph.w < 4 or glyph.w / glyph.h < 5.0:
+        return None
+    ink = glyph.image < 128
+    spans = np.zeros(glyph.h, dtype=np.int32)
+    for row_index, row in enumerate(ink):
+        columns = np.flatnonzero(row)
+        if columns.size:
+            spans[row_index] = int(columns[-1] - columns[0] + 1)
+    peak = int(np.argmax(spans))
+    if spans[peak] < 0.7 * glyph.w:
+        return None
+
+    # Grow around the peak across all near-full-width rule rows.
+    row0 = peak
+    row1 = peak + 1
+    while row0 > 0 and spans[row0 - 1] >= 0.6 * glyph.w:
+        row0 -= 1
+    while row1 < glyph.h and spans[row1] >= 0.6 * glyph.w:
+        row1 += 1
+    if row1 - row0 > 0.3 * glyph.h:
+        return None  # a broad letter stroke, not a thin rule
+
+    rule_ink = ink[row0:row1]
+    columns = np.flatnonzero(rule_ink.any(axis=0))
+    if columns.size == 0:
+        return None
+    col0, col1 = int(columns[0]), int(columns[-1]) + 1
+    rule_image = glyph.image[row0:row1, col0:col1]
+    rule = Glyph(
+        glyph.x0 + col0,
+        glyph.y0 + row0,
+        col1 - col0,
+        row1 - row0,
+        int((rule_image < 128).sum()),
+        rule_image,
+    )
+
+    remainder = glyph.image.copy()
+    remainder[row0:row1] = 255
+    fg = (remainder < 128).astype(np.uint8)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(fg, connectivity=8)
+    parts: list[Glyph] = []
+    for index in range(1, count):
+        x0, y0, width, height, area = map(int, stats[index])
+        if area < MIN_AREA:
+            continue
+        image = remainder[y0 : y0 + height, x0 : x0 + width]
+        parts.append(
+            Glyph(
+                glyph.x0 + x0,
+                glyph.y0 + y0,
+                width,
+                height,
+                area,
+                image,
+            )
+        )
+    if not parts:
+        return None
+    return parts + [rule]
+
+
+def _split_rule_blobs(comps: list[Glyph]) -> list[Glyph]:
+    """Repeatedly expose fraction rules hidden inside connected blobs."""
+    result = list(comps)
+    for _ in range(3):
+        changed = False
+        expanded: list[Glyph] = []
+        for glyph in result:
+            if _looks_like_radical(glyph, result):
+                expanded.append(glyph)
+                continue
+            parts = _split_rule_blob(glyph)
+            if parts is None:
+                expanded.append(glyph)
+            else:
+                expanded.extend(parts)
+                changed = True
+        result = expanded
+        if not changed:
+            break
+    return result
 
 
 def _try_split(glyph: Glyph, bank: TemplateBank) -> list[Glyph] | None:
@@ -784,7 +900,10 @@ def _find_fraction(
     if not comps:
         return None
     max_w = max(c.w for c in comps)
-    band = 0.1 * H
+    # Nested fractions are typeset much smaller than the enclosing expression;
+    # scaling this exclusion band too aggressively with the full image height
+    # can put their numerator directly on the boundary.
+    band = 0.04 * H
     bars = [
         c
         for c in comps
@@ -797,7 +916,7 @@ def _find_fraction(
     # Widest bar first: in a nested fraction that is the outer one, and
     # splitting there first keeps the recursion well-formed.
     for c in sorted(bars, key=lambda b: -b.w):
-        span = 0.15 * c.w  # tolerance for glyphs that overhang the bar slightly
+        span = 0.05 * c.w  # small tolerance for italic glyph overhang
         over_bar = [
             x for x in comps
             if x is not c and c.x0 - span <= x.cx <= c.x1 + span
@@ -1013,7 +1132,10 @@ def _split_scripts(
         center = _estimate_baseline(others, H) if others else H / 2.0
         main = limits + [c for c in others if not _is_script(c, center, H)]
         scripts = [c for c in others if _is_script(c, center, H)]
-        return main, scripts, None, None
+        # A one-glyph nested region cannot estimate its own scale, but its
+        # parent can. Preserve that hint so x/X and v/V remain distinguishable
+        # by x-height even when the numerator or denominator is a single atom.
+        return main, scripts, hint, None
 
     x_height, baseline = metrics
     main: list[Glyph] = []
@@ -1151,6 +1273,63 @@ def _join(tokens: list[Token], script: bool = False) -> str:
             out.append(" ")
         out.append(token.text)
     return "".join(out)
+
+
+def _normalize_delimiter_tokens(tokens: list[Token]) -> list[Token]:
+    """Resolve the shape ambiguity between parentheses and angle brackets.
+
+    Mathtext gives both delimiter pairs the same height and width, and at low
+    resolution a curved parenthesis can match an angle slightly better. Angle
+    brackets in this recognizer's grammar enclose vectors/tuples, which contain
+    a comma; a matched pair without a comma is therefore a parenthesized
+    expression. Unmatched angle glyphs are parentheses as well.
+    """
+    def _delimiter(token: Token, command: str) -> bool:
+        """Match a delimiter even when scripts are attached to its token."""
+        suffix = token.text[len(command) :] if token.text.startswith(command) else ""
+        return token.text.startswith(command) and (not suffix or suffix[0] in "_^")
+
+    def _replace(token: Token, command: str, replacement: str) -> None:
+        token.text = replacement + token.text[len(command) :]
+
+    stack: list[int] = []
+    for index, token in enumerate(tokens):
+        if _delimiter(token, "\\langle"):
+            stack.append(index)
+        elif _delimiter(token, "\\rangle"):
+            if not stack:
+                _replace(token, "\\rangle", ")")
+                token.kind = "close"
+                continue
+            opening = stack.pop()
+            if not any(t.kind == "comma" for t in tokens[opening + 1 : index]):
+                _replace(tokens[opening], "\\langle", "(")
+                tokens[opening].kind = "open"
+                _replace(token, "\\rangle", ")")
+                token.kind = "close"
+    for index in stack:
+        _replace(tokens[index], "\\langle", "(")
+        tokens[index].kind = "open"
+
+    # A parenthesis-shaped glyph can be an angle bracket at raster scale. On
+    # the right side of an equality, a matched pair containing a comma is the
+    # conventional vector/tuple notation used by this grammar. Function calls
+    # such as ``f(x, y)`` are left parenthesized because their opening token is
+    # preceded by an atom rather than an operator.
+    parens: list[int] = []
+    for index, token in enumerate(tokens):
+        if token.text == "(":
+            parens.append(index)
+        elif token.text == ")" and parens:
+            opening = parens.pop()
+            has_comma = any(t.kind == "comma" for t in tokens[opening + 1 : index])
+            preceded_by_operator = opening == 0 or tokens[opening - 1].kind == "operator"
+            if has_comma and preceded_by_operator:
+                tokens[opening].text = "\\langle"
+                tokens[opening].kind = "open"
+                token.text = "\\rangle"
+                token.kind = "close"
+    return tokens
 
 
 def _script(prefix: str, content: str, braces: bool = False) -> str:
@@ -1306,6 +1485,71 @@ def _build_units(
     return units
 
 
+def _merge_wide_vector_units(
+    units: list[_Unit], scripts: list[Glyph], x_height: float | None
+) -> list[_Unit]:
+    """Group adjacent uppercase letters covered by one vector arrow.
+
+    In ``\vec{AB}`` the visible arrowhead is centered over the pair and may
+    overlap only ``B`` even though the accent applies to both letters. A small
+    gap and an uppercase pair distinguish this from ``d\vec{r}``, where only
+    the lowercase ``r`` is accented.
+    """
+    scale = x_height or (np.median([u.h for u in units]) if units else 0.0)
+    for accent in scripts:
+        if accent.symbol != "\\vec" or len(units) < 2:
+            continue
+        owner = _script_owner(accent, units)
+        if owner is None:
+            continue
+        index = units.index(owner)
+        if index == 0:
+            continue
+        previous = units[index - 1]
+        if not (
+            len(previous.symbol) == 1
+            and previous.symbol.isupper()
+            and len(owner.symbol) == 1
+            and owner.symbol.isupper()
+        ):
+            continue
+        gap = owner.x0 - previous.x1
+        if gap > 0.4 * max(scale, 1.0):
+            continue
+        if accent.x0 > owner.x0 + 0.15 * owner.h:
+            continue
+        merged = _Unit(previous.glyphs + owner.glyphs, previous.symbol + owner.symbol)
+        units[index - 1 : index + 1] = [merged]
+    return units
+
+
+def _fix_unit_confusions(units: list[_Unit], x_height: float | None) -> None:
+    """Resolve narrow-stem ambiguities using neighboring math tokens."""
+    scale = x_height or (np.median([u.h for u in units]) if units else 1.0)
+    for index, unit in enumerate(units):
+        if unit.symbol != "l" or unit.style != "italic":
+            continue
+        previous = units[index - 1] if index else None
+        following = units[index + 1] if index + 1 < len(units) else None
+        close_previous = previous is not None and unit.x0 - previous.x1 < 0.5 * scale
+        close_following = following is not None and following.x0 - unit.x1 < 0.5 * scale
+        if (
+            (close_previous and previous.symbol.isupper())
+            or (close_following and following.symbol.isupper())
+        ):
+            unit.symbol = "I"
+            continue
+        # The point of a small factorial can be removed as a speck during
+        # preprocessing, leaving a terminal stem that looks like italic l.
+        if (
+            following is None
+            and close_previous
+            and previous.symbol in ("k", "n")
+            and unit.glyphs[0].w / max(unit.glyphs[0].h, 1) < 0.4
+        ):
+            unit.symbol = "!"
+
+
 def _script_owner(script: Glyph, units: list[_Unit]) -> _Unit | None:
     """Find the main-line unit a script belongs to.
 
@@ -1317,6 +1561,14 @@ def _script_owner(script: Glyph, units: list[_Unit]) -> _Unit | None:
     """
     if not units:
         return None
+    nearby_limits = [
+        unit for unit in units
+        if unit.symbol in LIMIT_SYMBOLS
+        and script.x1 >= unit.x0 - 0.5 * unit.h
+        and script.x0 <= unit.x1 + 0.5 * unit.h
+    ]
+    if nearby_limits:
+        return min(nearby_limits, key=lambda unit: abs(unit.cx - script.cx))
     overlapping = [
         u for u in units
         if min(u.x1, script.x1) - max(u.x0, script.x0)
@@ -1384,6 +1636,8 @@ def _mainline_tokens(
         _classify_group(main, bank, x_height, baseline, allow_accents=False)
 
     units = _build_units(main, bank, x_height, baseline)
+    units = _merge_wide_vector_units(units, scripts, x_height)
+    _fix_unit_confusions(units, x_height)
 
     for s in scripts:
         unit = _script_owner(s, units)
@@ -1433,7 +1687,7 @@ def _mainline_tokens(
             kind = "atom"  # a leading '-' is unary: "-b", not "- b"
         tokens.append(Token(symbol, kind, unit.x0, unit.x1))
 
-    return tokens, x_height
+    return _normalize_delimiter_tokens(tokens), x_height
 
 
 def _insert_thin_spaces(tokens: list[Token], x_height: float | None) -> list[Token]:
@@ -1468,6 +1722,7 @@ def _parse(
 ) -> str:
     """Recursive layout parser over a set of glyphs."""
     tokens, x_height = _parse_tokens(comps, H, W, bank, script, hint)
+    tokens = _normalize_delimiter_tokens(tokens)
     if not script:
         tokens = _insert_thin_spaces(tokens, x_height)
     return _join(tokens, script)
@@ -1491,15 +1746,40 @@ def _parse_tokens(
     if not comps:
         return [], None
     comps = _merge_equals(comps, H)
-    if bank is not None and hint is None and len(comps) >= 2:
-        # Measure the region before splitting it up: a part that is too small
-        # to measure on its own then falls back to the scale of the expression
-        # it came out of, which is what the spacing rules need.
-        hint = _estimate_metrics(comps, bank)[0]
-
     frac = _find_fraction(comps, H)
+    if frac is None:
+        # A dense numerator or denominator can touch its rule after
+        # rasterisation, hiding the fraction inside one connected component.
+        # Split only when doing so immediately exposes a valid fraction. This
+        # keeps the aggressive blob operation local and avoids perturbing
+        # ordinary words or radicals.
+        for glyph in sorted(comps, key=lambda item: -item.w):
+            if _looks_like_radical(glyph, comps):
+                continue
+            parts = _split_rule_blob(glyph)
+            if parts is None:
+                continue
+            expanded = [c for c in comps if c is not glyph] + parts
+            expanded = _merge_equals(expanded, H)
+            candidate = _find_fraction(expanded, H)
+            if candidate is not None:
+                comps = expanded
+                frac = candidate
+                break
     if frac is not None:
         bar, above, below = frac
+        # In a one-glyph fraction half, x/z/v can be classified as a capital
+        # because that isolated region has no independent x-height estimate.
+        # Compare it with the opposite half before descending recursively.
+        for half, opposite in ((above, below), (below, above)):
+            if len(half) != 1 or not opposite:
+                continue
+            glyph = half[0]
+            reference = float(np.median([item.h for item in opposite]))
+            if glyph.symbol in ("V", "X", "Z") and glyph.h < 0.85 * reference:
+                glyph.symbol = glyph.symbol.lower()
+                glyph.style = "italic"
+                glyph.locked = True
         rest = [c for c in comps if c is not bar and c not in above and c not in below]
         # Anything not stacked on the bar sits beside the fraction; the side is
         # decided by the glyph's center so no glyph is ever dropped.
@@ -1510,6 +1790,54 @@ def _parse_tokens(
             + r"}{" + _parse(below, H, W, bank, script, hint) + r"}",
             "atom", bar.x0, bar.x1,
         )
+
+        # A complete fraction may itself be a superscript, as in
+        # ``e^{-\frac{x^2}{2}}``. Since structures are found before the flat
+        # script pass, attach an elevated fraction to a nearby, larger base
+        # here instead of emitting it as a top-level neighbor.
+        fraction_parts = above + below
+        fraction_y0 = min(item.y0 for item in fraction_parts)
+        fraction_y1 = max(item.y1 for item in fraction_parts)
+        fraction_cy = (fraction_y0 + fraction_y1) / 2.0
+        fraction_glyph_height = float(np.median([item.h for item in fraction_parts]))
+        owners = [
+            item for item in left
+            if item.x1 <= bar.x0
+            and item.symbol not in INFIX_OPERATORS
+            and item.h >= 1.4 * fraction_glyph_height
+            and item.cy > fraction_cy + 0.15 * item.h
+            and bar.x0 - item.x1 < 1.5 * item.h
+        ]
+        if owners:
+            owner = max(owners, key=lambda item: item.x1)
+            trailing = [item for item in left if item is not owner and item.x0 >= owner.x0]
+            if all(item.cy < owner.cy for item in trailing):
+                prefix = [item for item in left if item is not owner and item.x0 < owner.x0]
+                owner_group = [owner] + trailing
+                prefix_tokens, prefix_height = _parse_tokens(
+                    prefix, H, W, bank, script, hint if script else None
+                )
+                owner_tokens, owner_height = _parse_tokens(
+                    owner_group, H, W, bank, script, hint if script else None
+                )
+                if owner_tokens:
+                    text = owner_tokens[-1].text
+                    caret = text.rfind("^")
+                    if caret >= 0:
+                        existing = text[caret + 1 :]
+                        if existing.startswith("{") and existing.endswith("}"):
+                            existing = existing[1:-1]
+                        text = text[:caret] + "^{" + existing + token.text + "}"
+                    else:
+                        text += "^{" + token.text + "}"
+                    owner_tokens[-1].text = text
+                    right_tokens, right_height = _parse_tokens(
+                        right, H, W, bank, script, hint if script else None
+                    )
+                    return (
+                        prefix_tokens + owner_tokens + right_tokens,
+                        prefix_height or owner_height or right_height,
+                    )
         return _splice(left, token, right, H, W, bank, script, hint)
 
     binom = _find_binom(comps)
@@ -1553,8 +1881,12 @@ def _splice(
     hint: float | None = None,
 ) -> tuple[list[Token], float | None]:
     """Parse the glyphs on either side of a structure and splice them around it."""
-    left_tokens, left_height = _parse_tokens(left, H, W, bank, script, hint)
-    right_tokens, right_height = _parse_tokens(right, H, W, bank, script, hint)
+    # Siblings beside a fraction/radical are normally full-size main-line
+    # material. Reusing the structure's metric hint can make a full-size x look
+    # like cap-height X. Nested script regions still need the enclosing hint.
+    side_hint = hint if script else None
+    left_tokens, left_height = _parse_tokens(left, H, W, bank, script, side_hint)
+    right_tokens, right_height = _parse_tokens(right, H, W, bank, script, side_hint)
     x_height = left_height or right_height
     return left_tokens + [token] + right_tokens, x_height
 
@@ -1583,7 +1915,23 @@ def _looks_like_radical(c: Glyph, comps: list[Glyph]) -> bool:
     if top_band.size == 0:
         return False
     # The vinculum spans nearly the whole width of the component.
-    return float(top_band.any(axis=0).mean()) > 0.85
+    return float(top_band.any(axis=0).mean()) > 0.80
+
+
+def _looks_like_nabla(c: Glyph) -> bool:
+    """Return True for a hollow triangle that narrows toward the bottom."""
+    if c.h < 8 or c.w < 8 or not 0.55 <= c.w / c.h <= 1.25:
+        return False
+    widths = []
+    for row in c.image < 128:
+        columns = np.flatnonzero(row)
+        widths.append(int(columns[-1] - columns[0] + 1) if columns.size else 0)
+    peak = int(np.argmax(widths))
+    return (
+        widths[peak] >= 0.8 * c.w
+        and peak <= 0.25 * c.h
+        and np.mean(widths[-max(2, c.h // 5) :]) < 0.5 * widths[peak]
+    )
 
 
 def _fix_classification(comps: list[Glyph], H: int, W: int) -> None:
@@ -1600,6 +1948,11 @@ def _fix_classification(comps: list[Glyph], H: int, W: int) -> None:
             continue
         if c.h > 0.5 * H and c.w / c.h < 0.5 and c.symbol in ("[", "]"):
             c.symbol = "\\int"
+            c.conf = 1.0
+            c.locked = True
+        elif c.symbol in ("Q", "q") and _looks_like_nabla(c):
+            c.symbol = "\\nabla"
+            c.style = "italic"
             c.conf = 1.0
             c.locked = True
         elif _looks_like_radical(c, comps) or (

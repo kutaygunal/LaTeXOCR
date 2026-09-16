@@ -73,6 +73,7 @@ SYMBOL_SOURCES: dict[str, str] = {
     "|": r"|", ",": r",", ".": r".", "!": r"!", "\\nabla": r"\nabla",
     "\\partial": r"\partial", "\\infty": r"\infty", "\\alpha": r"\alpha",
     "\\beta": r"\beta", "\\gamma": r"\gamma", "\\pi": r"\pi",
+    "\\mu": r"\mu", "\\sigma": r"\sigma",
     # Rendered bare: attaching empty limits (\sum_{}^{}) makes mathtext switch
     # to the smaller inline form, which is not the shape these operators have
     # in the equations being read.
@@ -333,8 +334,12 @@ def _variant_sources(name: str) -> list[tuple[str, str]]:
     """Return the ``(style, mathtext source)`` pairs to render for ``name``."""
     source = SYMBOL_SOURCES[name]
     if name in _LETTERS:
-        # Italic (a variable) and roman (inside a function name like \log).
-        return [(_ITALIC, source), (_ROMAN, rf"\mathrm{{{source}}}")]
+        # Lowercase letters can also be bold vectors/physical quantities.
+        return [
+            (_ITALIC, source),
+            (_ROMAN, rf"\mathrm{{{source}}}"),
+            (_BOLD, rf"\mathbf{{{source}}}"),
+        ]
     if name in _UPPERCASE:
         # Uppercase also appears in bold via \mathbf (e.g. \mathbf{F}).
         return [

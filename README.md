@@ -193,6 +193,31 @@ python -m src.main recognize path/to/equation.png --recognizer owncode
 python -m src.main generate-dataset
 ```
 
+### Stress-test the own-code engine on 100 complex equations
+
+The reproducible stress corpus covers algebra, fractions, calculus, series,
+trigonometry, vectors, probability, physics, geometry, and nested layouts. It
+generates 100 distinct expressions with balanced difficulty tiers and records
+per-category metrics and below-threshold failures in the benchmark JSON.
+
+```bash
+python -m src.main generate-complex --data-dir data/complex_100
+python -m src.main benchmark \
+  --data-dir data/complex_100 \
+  --results-file complex_100_owncode.json \
+  --skip-ai --skip-formulanet
+```
+
+For a clean-only complexity baseline, call `generate_complex(...,
+tiers=("clean",))` from Python and benchmark that directory with the same
+own-code-only command.
+
+Current clean-corpus result for the own-code engine: **100/100 canonical exact
+matches**, 1.000 mean similarity, 1.000 pass rate, and zero recognition errors.
+Canonical exactness ignores LaTeX spellings that render the same token stream
+(for example `x^2` versus `x^{2}`, optional `\left`/`\right`, and whitespace).
+The JSON also records `raw_exact_match_rate` for byte-for-byte auditing.
+
 ### Run the full benchmark (both engines, held-out test set)
 
 ```bash

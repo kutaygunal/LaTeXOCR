@@ -14,15 +14,69 @@ Metrics
 
 from __future__ import annotations
 
+import re
 import time
 from collections import defaultdict
 
 import numpy as np
 
 
+_LATEX_TOKEN = re.compile(r"\\[A-Za-z]+|\\.|[{}_^]|[^\s]")
+
+
+def normalize_latex(expression: str) -> str:
+    """Canonicalize cosmetic LaTeX differences without changing its tokens.
+
+    OCR output is source code, and the same formula has many byte-level forms:
+    ``x^2`` and ``x^{2}``, optional ``\\left``/``\\right``, or spaces around
+    operators. The benchmark's exact metric compares a token-preserving
+    canonical representation so these equivalent spellings count as exact.
+    Keeping explicit token separators prevents an invalid command such as
+    ``\\pir`` from becoming equal to the valid ``\\pi r``.
+    """
+    tokens = [
+        token for token in _LATEX_TOKEN.findall(expression)
+        if token not in (r"\left", r"\right", r"\,")
+    ]
+
+    collapsed: list[str] = []
+    index = 0
+    while index < len(tokens):
+        if tokens[index : index + 3] == [r"\cdot", r"\cdot", r"\cdot"]:
+            collapsed.append(r"\cdots")
+            index += 3
+        else:
+            collapsed.append(tokens[index])
+            index += 1
+
+    # Braces around one atomic sub/superscript are optional in LaTeX.
+    canonical: list[str] = []
+    index = 0
+    while index < len(collapsed):
+        if (
+            collapsed[index] in ("_", "^")
+            and index + 3 < len(collapsed)
+            and collapsed[index + 1] == "{"
+            and collapsed[index + 3] == "}"
+            and collapsed[index + 2] not in ("{", "}", "_", "^")
+        ):
+            canonical.extend((collapsed[index], collapsed[index + 2]))
+            index += 4
+        else:
+            canonical.append(collapsed[index])
+            index += 1
+    # Terminate control words explicitly while leaving ordinary character runs
+    # compact. This preserves command boundaries without changing familiar
+    # strings such as ``x^2`` (and keeps character metrics intuitive).
+    return "".join(
+        token + "{}" if re.fullmatch(r"\\[A-Za-z]+", token) else token
+        for token in canonical
+    )
+
+
 def exact_match(prediction: str, ground_truth: str) -> bool:
-    """Return True if the prediction exactly equals the ground truth."""
-    return prediction == ground_truth
+    """Return True when two LaTeX strings have the same canonical tokens."""
+    return normalize_latex(prediction) == normalize_latex(ground_truth)
 
 
 def levenshtein_distance(a: str, b: str) -> int:
@@ -50,6 +104,8 @@ def levenshtein_similarity(prediction: str, ground_truth: str) -> float:
     1.0 means identical; 0.0 means completely different. Normalized by the
     length of the longer string.
     """
+    prediction = normalize_latex(prediction)
+    ground_truth = normalize_latex(ground_truth)
     if prediction == ground_truth:
         return 1.0
     denom = max(len(prediction), len(ground_truth))
@@ -64,6 +120,8 @@ def symbol_accuracy(prediction: str, ground_truth: str) -> float:
     Fraction of aligned characters that match, computed over the longer string
     length (mismatches and length differences both count as errors).
     """
+    prediction = normalize_latex(prediction)
+    ground_truth = normalize_latex(ground_truth)
     if prediction == ground_truth:
         return 1.0
     n = max(len(prediction), len(ground_truth))
@@ -113,6 +171,10 @@ def evaluate(
     result: dict = {
         "n": n,
         "exact_match_rate": float(np.mean(exact)) if n else 0.0,
+        "raw_exact_match_rate": (
+            float(np.mean([p == g for p, g in zip(predictions, ground_truths)]))
+            if n else 0.0
+        ),
         "mean_levenshtein_similarity": float(np.mean(sims)) if n else 0.0,
         "mean_symbol_accuracy": float(np.mean(syms)) if n else 0.0,
     }

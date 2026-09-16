@@ -17,6 +17,7 @@ from metrics import (  # noqa: E402
     exact_match,
     levenshtein_distance,
     levenshtein_similarity,
+    normalize_latex,
     symbol_accuracy,
     time_recognizer,
 )
@@ -38,6 +39,14 @@ def test_exact_match_false():
 def test_exact_match_empty():
     assert exact_match("", "") is True
     assert exact_match("", "a") is False
+
+
+def test_exact_match_accepts_equivalent_latex_formatting():
+    assert exact_match(r"\left( x^{2} \, + y_1 \right)", r"(x^2+y_{1})")
+
+
+def test_normalize_latex_preserves_command_boundaries():
+    assert normalize_latex(r"\pi r") != normalize_latex(r"\pir")
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +139,7 @@ def test_evaluate_basic():
     res = evaluate(["x^2", "x^2", "x^3"], ["x^2", "x^2", "x^2"])
     assert res["n"] == 3
     assert res["exact_match_rate"] == pytest.approx(2 / 3)
+    assert res["raw_exact_match_rate"] == pytest.approx(2 / 3)
     # "x^3" vs "x^2": distance 1, denom 3 -> sim 2/3. Mean = (1+1+2/3)/3 = 8/9.
     assert res["mean_levenshtein_similarity"] == pytest.approx(8 / 9)
     # symbol acc: (3+3+2)/9 = 8/9

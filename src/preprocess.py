@@ -288,6 +288,19 @@ def _deskew(binary: np.ndarray) -> np.ndarray:
     if not np.any(binary < 128):
         return binary
 
+    # A long, very thin connected component is a much stronger orientation
+    # cue than the global row profile. Fraction rules are exactly horizontal
+    # in an upright formula; projection scoring can otherwise prefer a large
+    # false rotation because stacked numerator/denominator rows are not a
+    # conventional text line. A genuinely tilted rule has a much taller
+    # bounding box and will not satisfy this test.
+    foreground = (binary < 128).astype(np.uint8)
+    count, _, stats, _ = cv2.connectedComponentsWithStats(foreground, connectivity=8)
+    for x, y, width, height, area in stats[1:count]:
+        del x, y, area
+        if height > 0 and width / height >= 12.0 and width >= 0.08 * min(binary.shape):
+            return binary
+
     angle = _skew_angle(binary)
     if abs(angle) < 0.5:
         return binary

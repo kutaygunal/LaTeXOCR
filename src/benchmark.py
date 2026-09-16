@@ -84,13 +84,36 @@ def _per_tier_metrics(
     times: list[float],
     threshold: float,
 ) -> dict:
-    """Compute per-tier metrics (exact match, similarity, symbol acc, time,
-    pass rate) by grouping samples by their difficulty tier."""
+    """Compute metrics grouped by the sample difficulty tier."""
+    return _group_metrics(samples, predictions, times, threshold, "tier")
+
+
+def _per_category_metrics(
+    samples: list[dict],
+    predictions: list[str],
+    times: list[float],
+    threshold: float,
+) -> dict:
+    """Compute metrics grouped by an optional expression category."""
+    return _group_metrics(samples, predictions, times, threshold, "category")
+
+
+def _group_metrics(
+    samples: list[dict],
+    predictions: list[str],
+    times: list[float],
+    threshold: float,
+    field: str,
+) -> dict:
+    """Compute exact, similarity, symbol, timing, and pass metrics by field."""
     by_tier: dict[str, dict] = {}
     for sample, pred, elapsed in zip(samples, predictions, times):
-        tier = sample["tier"]
+        group = sample.get(field)
+        if group is None:
+            continue
         bucket = by_tier.setdefault(
-            tier, {"predictions": [], "ground_truths": [], "times": []}
+            str(group),
+            {"predictions": [], "ground_truths": [], "times": []},
         )
         bucket["predictions"].append(pred)
         bucket["ground_truths"].append(sample["latex"])
@@ -107,6 +130,7 @@ def _per_tier_metrics(
         out[tier] = {
             "n": agg["n"],
             "exact_match_rate": agg["exact_match_rate"],
+            "raw_exact_match_rate": agg["raw_exact_match_rate"],
             "mean_levenshtein_similarity": agg["mean_levenshtein_similarity"],
             "mean_symbol_accuracy": agg["mean_symbol_accuracy"],
             "mean_seconds": agg["timing"]["mean_seconds"],
@@ -172,6 +196,7 @@ def _run_recognizer(
         "available": True,
         "n": agg["n"],
         "exact_match_rate": agg["exact_match_rate"],
+        "raw_exact_match_rate": agg["raw_exact_match_rate"],
         "mean_levenshtein_similarity": agg["mean_levenshtein_similarity"],
         "mean_symbol_accuracy": agg["mean_symbol_accuracy"],
         "pass_rate": pass_rate(predictions, ground_truths, threshold),
@@ -179,6 +204,22 @@ def _run_recognizer(
         "per_tier": _per_tier_metrics(samples, predictions, times, threshold),
         "error_count": error_count,
     }
+    if samples and all("category" in sample for sample in samples):
+        result["per_category"] = _per_category_metrics(
+            samples, predictions, times, threshold
+        )
+    result["failures"] = [
+        {
+            "id": sample.get("id"),
+            "category": sample.get("category"),
+            "tier": sample.get("tier"),
+            "latex": sample["latex"],
+            "prediction": prediction,
+            "similarity": levenshtein_similarity(prediction, sample["latex"]),
+        }
+        for sample, prediction in zip(samples, predictions)
+        if levenshtein_similarity(prediction, sample["latex"]) < threshold
+    ]
     return result
 
 

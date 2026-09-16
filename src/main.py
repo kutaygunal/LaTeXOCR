@@ -7,6 +7,7 @@ chains the pipeline end-to-end.
 Usage
 -----
     python -m src.main generate-dataset [--per-tier N] [--seed S] [--data-dir D]
+    python -m src.main generate-complex [--seed S] [--data-dir D]
     python -m src.main preprocess IMAGE [--height H] [--out O]
     python -m src.main recognize IMAGE [--recognizer ai|owncode|formulanet]
     python -m src.main benchmark [--data-dir D] [--results-dir R] [--skip-ai]
@@ -25,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ai_recognizer import recognize as ai_recognize  # noqa: E402
 from benchmark import run_benchmark  # noqa: E402
-from dataset import DatasetError, generate  # noqa: E402
+from dataset import DatasetError, generate, generate_complex  # noqa: E402
 from formulanet_recognizer import recognize as formulanet_recognize  # noqa: E402
 from owncode_recognizer import recognize as owncode_recognize  # noqa: E402
 from preprocess import preprocess  # noqa: E402
@@ -46,6 +47,12 @@ def _cmd_generate_dataset(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     print(f"Dataset generated. Manifest: {manifest}")
+    return 0
+
+
+def _cmd_generate_complex(args: argparse.Namespace) -> int:
+    manifest = generate_complex(data_dir=args.data_dir, seed=args.seed)
+    print(f"Complex 100-example dataset generated. Manifest: {manifest}")
     return 0
 
 
@@ -158,6 +165,18 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--seed", type=int, default=42, help="deterministic split seed")
     gen.add_argument("--data-dir", default="data", help="output data directory")
     gen.set_defaults(func=_cmd_generate_dataset)
+
+    complex_gen = sub.add_parser(
+        "generate-complex",
+        help="render the 100-expression own-code stress corpus",
+    )
+    complex_gen.add_argument(
+        "--data-dir", default="data/complex_100", help="output data directory"
+    )
+    complex_gen.add_argument(
+        "--seed", type=int, default=2026, help="tier assignment and noise seed"
+    )
+    complex_gen.set_defaults(func=_cmd_generate_complex)
 
     pre = sub.add_parser("preprocess", help="Preprocess a single image")
     pre.add_argument("image", help="path to the input image")
