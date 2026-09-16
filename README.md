@@ -2,9 +2,9 @@
 
 # 📐 LaTeXOCR
 
-**Convert images of math equations into real LaTeX, with two competing engines and a built-in benchmark.**
+**Convert images of math equations into real LaTeX with three recognition engines and a built-in benchmark.**
 
-A Python tool that takes a photo or screenshot of a formula and returns editable **LaTeX**. It ships with **two recognition approaches** — a **local AI vision model** (Ollama `qwen3-vl:8b`) and a fully **hand-written OCR pipeline** (OpenCV + font metrics) — and a **benchmark harness** that measures both on the same held-out test set so you can see which to use and when.
+A Python tool that takes a photo or screenshot of a formula and returns editable **LaTeX**. It ships with **three recognition approaches** — a **local AI vision model** (Ollama `qwen3-vl:8b`), optional **FormulaNet**, and a fully **hand-written OCR pipeline** (OpenCV + font metrics) — plus a benchmark harness for repeatable comparisons.
 
 On the held-out test set the hand-written pipeline now **beats the vision model on accuracy** (94% vs 91% symbol accuracy) while running **155× faster** (26 ms vs 4.0 s per image).
 
@@ -81,6 +81,22 @@ Both engines were evaluated on a **sampled, held-out test set** (12 images per d
 
 Run over the **entire** 900-image held-out test set, the own-code engine scores **94.3% symbol accuracy**, **97.0% Levenshtein similarity** and **87.6% exact match**, at **23ms per image**.
 
+### 100-equation complex clean benchmark
+
+The own-code engine was also tested without Ollama or FormulaNet on a separate,
+reproducible set of 100 clean equations. The corpus spans algebra, fractions,
+calculus, series, trigonometry, vectors, probability, physics, geometry, and
+nested layouts.
+
+| Engine | Equations | Canonical exact | Similarity | Pass rate | Errors | Mean time |
+|---|---:|---:|---:|---:|---:|---:|
+| Own-code OCR | 100 | **100/100 (100%)** | **1.000** | **100%** | **0** | **43ms/image** |
+
+Canonical exact comparison preserves LaTeX tokens while ignoring cosmetic
+source differences such as whitespace, optional `\left`/`\right`, and `x^2`
+versus `x^{2}`. The byte-for-byte `raw_exact_match_rate` is **57%**; all 43
+remaining raw differences are equivalent formatting, not recognition errors.
+
 > 📌 **Recommendation:** the **own-code engine is the default choice** — higher accuracy than the vision model on aggregate (94% vs 91%), 155× faster, no model to download and nothing to run alongside it. Reach for the **local AI engine** on **inputs the pipeline was not built for** — handwriting, photographs, unusual fonts, or notation outside the symbol library — where a vision model degrades gracefully and a template matcher does not. The AI also stays ahead on the `noisy` and `low_res` tiers.
 
 *Reproduce it:*
@@ -96,7 +112,9 @@ python -m src.benchmark                                      # full held-out tes
 ## ✨ Features
 
 - **Three recognition engines** — local AI vision model + FormulaNet + hand-written OCR pipeline
-- **`recognize <image>`** — convert a single image to LaTeX with either engine
+- **`recognize <image>`** — convert a single image to LaTeX with any engine
+- **Broad raster input support** — PNG, JPEG, BMP, TIFF, GIF, WebP, ICO,
+  Netpbm, and JPEG 2000; transparent pixels are composited onto white
 - **Font-metric classification** — every glyph is scored on shape, proportions, size and baseline position, which is what separates `.` from `\cdot`, `o` from `O`, and an integral sign from a bold `I`
 - **Glyph repair** — reassembles the pieces of `=`, `i`, `j`, `!` and `\pm`, and splits apart symbols that were printed touching (a `\sum` and the limit stacked on it)
 - **Layout parser** — fractions, radicals with indices, binomials, accents, stacked and side-set limits, and multi-letter function names recovered with a lexicon
@@ -106,7 +124,7 @@ python -m src.benchmark                                      # full held-out tes
 - **Fair benchmarking** — disjoint train/test split, per-tier accuracy/speed/robustness, graceful handling when Ollama is offline
 - **Automatic report** — Markdown + styled HTML comparing both engines with a clear recommendation
 - **Full CLI** — `generate-dataset`, `preprocess`, `recognize`, `benchmark`, `report`, and `run-all`
-- **302 passing tests** covering preprocessing, noise and skew handling, both recognizers, layout analysis, the template bank, the benchmark, and the report
+- **316 passing tests** covering preprocessing, noise and skew handling, the recognizers, layout analysis, the template bank, the benchmark, and the report
 
 ---
 
@@ -121,7 +139,7 @@ python -m src.benchmark                                      # full held-out tes
 | Symbol rendering | matplotlib mathtext, SymPy |
 | Symbol classification | rendered template bank + font metrics (optional PyTorch CNN boost) |
 | Dataset / metrics | custom `dataset.py`, `metrics.py` |
-| Testing | `pytest` (302 tests) |
+| Testing | `pytest` (316 tests) |
 
 ---
 
@@ -140,7 +158,7 @@ LaTeXOCR/
 │   ├── benchmark.py             # Benchmark harness (engines, test set)
 │   ├── report.py                # Markdown + HTML report generator
 │   └── main.py                  # CLI entry point (full pipeline)
-├── tests/                       # 302 pytest tests
+├── tests/                       # 316 pytest tests
 ├── samples/                     # Sample images + benchmark chart (used in README)
 ├── benchmark_tiers.py           # Per-tier benchmark for charting
 ├── make_charts.py               # Generates samples/benchmark_accuracy.png + benchmark_speed.png
@@ -171,10 +189,25 @@ pip install -r requirements.txt
 
 ### Recognize a single image
 
-The shared loader used by the own-code and AI engines accepts PNG, JPEG, BMP,
-TIFF, GIF, WEBP, and several other common raster formats. Animated images are
-read deterministically from their first frame. SVG is not currently accepted
-because the pipeline operates on raster pixels.
+The shared loader used by the own-code and Ollama engines supports these raster
+formats:
+
+| Format | Extensions | Notes |
+|---|---|---|
+| PNG | `.png` | Transparency is composited onto white |
+| JPEG | `.jpg`, `.jpeg` | Standard photographic images |
+| BMP | `.bmp` | Windows bitmap |
+| TIFF | `.tif`, `.tiff` | First image/page is read |
+| GIF | `.gif` | Static GIFs supported; animated GIFs use the first frame |
+| WebP | `.webp` | Static or animated input; the first frame is used |
+| ICO | `.ico` | Icon raster input |
+| Netpbm | `.ppm`, `.pgm`, `.pbm` | Color, grayscale, and bitmap variants |
+| JPEG 2000 | `.jp2` | Requires decoder support in the installed Pillow build |
+
+All inputs are converted to grayscale, normalized to black-on-white, denoised,
+deskewed, cropped, and resized before own-code recognition. SVG and PDF are not
+accepted directly because the recognition pipeline operates on raster pixels;
+render them to one of the formats above first.
 
 ```bash
 # Use the local AI engine (default)
